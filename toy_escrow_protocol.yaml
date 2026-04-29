@@ -1,0 +1,67 @@
+# toy_escrow_protocol.yaml
+# Minimal 3-state escrow protocol for methodology validation.
+# Used in Section 8 ("Generality beyond ACTP") of the paper.
+#
+# Expected results:
+#   1-complex H^1 = 0  (acyclic, full field carry-through)
+#   2-complex H^1 = 0  (no faces needed, graph is a tree)
+#
+# To introduce a deliberate gap, remove "amount" from the
+# DELIVER -> RELEASE transition carries list. This should
+# raise H^1 to 1.
+
+states:
+  LOCK:
+    stalks:
+      - transaction_id
+      - payer_address
+      - payee_address
+      - amount
+      - escrow_hash
+
+  DELIVER:
+    stalks:
+      - transaction_id
+      - payer_address
+      - payee_address
+      - amount
+      - escrow_hash
+      - delivery_proof
+
+  RELEASE:
+    stalks:
+      - transaction_id
+      - payer_address
+      - payee_address
+      - amount
+      - escrow_hash
+      - settlement_tx
+
+transitions:
+  - from: LOCK
+    to: DELIVER
+    name: deliver
+    carries:
+      - transaction_id
+      - payer_address
+      - payee_address
+      - amount
+      - escrow_hash
+
+  - from: DELIVER
+    to: RELEASE
+    name: release
+    carries:
+      - transaction_id
+      - payer_address
+      - payee_address
+      - amount
+      - escrow_hash
+
+paths:
+  happy:
+    states: [LOCK, DELIVER, RELEASE]
+    expect_h1: 0
+
+expect_h1:
+  1complex: 0

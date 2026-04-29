@@ -1,0 +1,56 @@
+# toy_escrow_broken.yaml
+# Minimal escrow with dispute branch. The dispute path loses "amount"
+# creating a cycle where data does not globalise.
+# Expected: H^1 > 0
+
+states:
+  LOCK:
+    stalks:
+      - transaction_id
+      - payer_address
+      - payee_address
+      - amount
+      - escrow_hash
+
+  DELIVER:
+    stalks:
+      - transaction_id
+      - payer_address
+      - payee_address
+      - amount
+      - escrow_hash
+      - delivery_proof
+
+  DISPUTE:
+    stalks:
+      - transaction_id
+      - payer_address
+      - payee_address
+      - escrow_hash
+      - dispute_reason
+
+  RELEASE:
+    stalks:
+      - transaction_id
+      - payer_address
+      - payee_address
+      - amount
+      - escrow_hash
+      - settlement_tx
+
+transitions:
+  - from: LOCK
+    to: DELIVER
+    name: deliver
+
+  - from: DELIVER
+    to: RELEASE
+    name: release_direct
+
+  - from: DELIVER
+    to: DISPUTE
+    name: open_dispute
+
+  - from: DISPUTE
+    to: RELEASE
+    name: resolve_dispute

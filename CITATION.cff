@@ -1,0 +1,33 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the accompanying paper."
+title: "actp-sheaf-cohomology: H¹ verification artifact for ACTP"
+abstract: >-
+  Reproducibility artifact for "Sheaf Cohomology for Settlement Protocol
+  Verification". Computes H¹ over the ACTP 8-state lifecycle and validates
+  topological completeness on the published 2-complex.
+authors:
+  - family-names: "Rooschüz"
+    given-names: "Justin"
+    affiliation: "AGIRAILS Inc."
+  - family-names: "Mujić"
+    given-names: "Damir"
+    affiliation: "AGIRAILS Inc."
+license: Apache-2.0
+repository-code: "https://github.com/agirails/actp-sheaf-cohomology"
+keywords:
+  - sheaf-cohomology
+  - formal-verification
+  - protocol-verification
+  - applied-topology
+  - actp
+  - agirails
+preferred-citation:
+  type: article
+  title: "Sheaf Cohomology for Settlement Protocol Verification"
+  authors:
+    - family-names: "Rooschüz"
+      given-names: "Justin"
+    - family-names: "Mujić"
+      given-names: "Damir"
+  year: 2026
+  notes: "AGIRAILS Inc."
