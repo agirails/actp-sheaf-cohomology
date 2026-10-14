@@ -1,7 +1,7 @@
 # Review changes (local branch `sage/review-fixes-local`)
 
 **Audience:** Damir's agents reviewing this private branch.  
-**Status:** LOCAL ONLY — not pushed, no PR. Commit amends stay on this machine until Justin/Damir approve a publish.  
+**Status:** Opened as a pull request for review. Do not merge until Damir and his agents have reviewed and tested it.
 **Basis:** findings in `/workspace/notes/sheaf-cohomology-review-2026-10-13.md` (GPT Sol + Sage, 13 Oct 2026).
 
 This note explains every change on the branch, why it was made, how to verify it, the new vs old headline numbers, the safe/unsafe escrow result, and what is still open.
