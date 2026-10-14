@@ -718,9 +718,11 @@ appear on $\partial f$.
 
 \begin{remark}
 This convention selects the maximal face stalk compatible with the restriction
-structure.  Other choices (e.g., a strict subspace) exist but do not affect
-the $\Hone = 0$ result, since any subspace of this maximal stalk still fills
-the same 1-cycles.
+structure.  Other choices (e.g., a strict subspace) are possible, but the
+$\Hone = 0$ result depends on this one: shrinking a face stalk removes rows
+of $\delta_1$ and can only enlarge $\ker\delta_1$, so it can raise $\Hone$.
+In the extreme case where every face stalk is zero, $\delta_1 = 0$ and $\Hone$
+returns to its 1-complex value of 24.
 \end{remark}
 
 In the current public ACTP artifact, the 10 explicit faces comprise one

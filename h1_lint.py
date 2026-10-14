@@ -24,7 +24,10 @@ import yaml
 
 # Import engine from same directory
 sys.path.insert(0, str(Path(__file__).parent))
-from h1_engine import analyse_protocol, analyse_protocol_2complex, analyse_path, trace_leaks
+from h1_engine import (
+    analyse_protocol, analyse_protocol_2complex, analyse_path, trace_leaks,
+    validate_protocol, field_loss, ProtocolValidationError,
+)
 
 
 def _validate_path_sequence(edges: list, transitions_by_name: dict, face_name: str, side: str) -> tuple:
@@ -123,6 +126,12 @@ def load_protocol(config_path: str) -> dict:
             )
             sys.exit(1)
 
+    try:
+        validate_protocol(states, transitions, faces)
+    except ProtocolValidationError as exc:
+        print(f"ERROR: {config_path}: {exc}", file=sys.stderr)
+        sys.exit(1)
+
     return {
         "name": proto.get("name", "Unknown"),
         "version": proto.get("version", "?"),
@@ -162,6 +171,7 @@ def build_report(proto: dict, include_two_complex: bool = False) -> dict:
         },
         "paths": {},
         "leaks": trace_leaks(states, transitions),
+        "field_loss": field_loss(states, transitions),
         "regressions": [],
     }
 
@@ -245,6 +255,20 @@ def print_human(proto: dict, report: dict, show_leaks: bool = False, leak_path: 
     print(f"  H⁰ = {full['h0']:3d}  (global sections)")
     print(f"  C⁰ = {full['c0']:3d}  C¹ = {full['c1']:3d}  rank(δ₀) = {full['rank_delta0']}")
     print()
+    print("  Note: H¹ counts cycles in each field's support graph, not lost data.")
+    print()
+
+    fl = report.get("field_loss")
+    if fl is not None:
+        print("FIELD LOSS (direct score: dropped + missing invariant fields)")
+        print(f"  score = {fl['score']}  invariant fields = {len(fl['invariant_fields'])}")
+        for d in fl["dropped"]:
+            print(f"    dropped  {d['field']:22s} at {d['transition']} ({d['from']} → {d['to']})")
+        for m in fl["missing"]:
+            print(f"    missing  {m['field']:22s} at {m['state']}")
+        if fl["declared_drops"]:
+            print(f"  ({len(fl['declared_drops'])} declared intentional drops not scored)")
+        print()
 
     if show_2complex:
         if "two_complex" not in report:

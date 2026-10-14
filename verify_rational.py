@@ -11,6 +11,7 @@ Usage:
 """
 
 import yaml
+import sys
 import numpy as np
 from fractions import Fraction
 from typing import List, Dict
@@ -37,7 +38,10 @@ def build_delta0_rational(states: Dict[str, List[str]], transitions: List[dict])
     for t in transitions:
         src = t["from"]
         tgt = t["to"]
-        shared = [d for d in states[src] if d in states[tgt]]
+        if t.get("carries") is not None:
+            shared = [d for d in states[src] if d in t["carries"]]
+        else:
+            shared = [d for d in states[src] if d in states[tgt]]
         edge_info.append({"src": src, "tgt": tgt, "shared": shared, "offset": n_e})
         n_e += len(shared)
         edge_dims.append(len(shared))
@@ -54,11 +58,12 @@ def build_delta0_rational(states: Dict[str, List[str]], transitions: List[dict])
         for i, dim_name in enumerate(shared):
             # Target (head) projection: +1
             tgt_idx = state_offset[tgt] + states[tgt].index(dim_name)
-            delta0[e_off + i][tgt_idx] = Fraction(1)
+            delta0[e_off + i][tgt_idx] += Fraction(1)
 
             # Source (tail) projection: -1
             src_idx = state_offset[src] + states[src].index(dim_name)
-            delta0[e_off + i][src_idx] = Fraction(-1)
+            # Accumulate: on a self-loop src_idx == tgt_idx and the entry is 0.
+            delta0[e_off + i][src_idx] -= Fraction(1)
 
     return delta0, n_v, n_e
 
@@ -126,7 +131,12 @@ def verify_protocol(yaml_path: str, label: str):
     rank_numpy = np.linalg.matrix_rank(delta0_np, tol=1e-9)
     h1_numpy = n_e - rank_numpy
 
-    match = "✅" if rank_rational == rank_numpy else "❌ MISMATCH"
+    # Independent check against the production engine's own assembly.
+    from h1_engine import analyse_protocol
+    h1_engine_val = analyse_protocol(states, transitions)["dim_h1"]
+
+    ok = (rank_rational == rank_numpy) and (h1_engine_val == h1_rational)
+    match = "✅" if ok else "❌ MISMATCH"
 
     print(f"\n{label}")
     print(f"  C⁰ = {n_v}  C¹ = {n_e}")
@@ -134,9 +144,10 @@ def verify_protocol(yaml_path: str, label: str):
     print(f"  rank(δ₀) numpy    = {rank_numpy}")
     print(f"  H¹ rational = {h1_rational}")
     print(f"  H¹ numpy    = {h1_numpy}")
+    print(f"  H¹ engine   = {h1_engine_val}")
     print(f"  {match}")
 
-    return rank_rational == rank_numpy
+    return ok
 
 
 if __name__ == "__main__":
@@ -155,3 +166,4 @@ if __name__ == "__main__":
         print("Rational arithmetic agrees with floating-point in every case.")
     else:
         print("❌ CROSS-VALIDATION FAILED — investigate mismatches above.")
+        sys.exit(1)

@@ -112,6 +112,8 @@ transitions:
   - { from: QUOTED,       to: CANCELLED,   name: cancel_quoted }
   - { from: COMMITTED,    to: CANCELLED,   name: cancel_committed }
   - { from: IN_PROGRESS,  to: CANCELLED,   name: cancel_in_progress }
+  # Described in the paper (Sec. on implemented transitions) but missing from v1 of this model.
+  - { from: DISPUTED,     to: CANCELLED,   name: cancel_disputed }
 
 # Explicit 2-cells. Each face is the formal difference of two directed paths
 # with identical endpoints. The face stalk is the intersection of all edge
@@ -156,6 +158,10 @@ faces:
   - name: cancel_commit_vs_inprog
     plus: [startWork, cancel_in_progress]
     minus: [cancel_committed]
+
+  - name: cancel_via_dispute
+    plus: [deliver, dispute, cancel_disputed]
+    minus: [cancel_in_progress]
 
 # Named analysis paths — define subgraphs to check independently
 paths:

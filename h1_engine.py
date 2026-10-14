@@ -10,6 +10,87 @@ No hardcoded ACTP states — fully generic.
 import numpy as np
 from typing import Dict, List, Optional
 
+COMPLEX_TOL = 1e-9
+
+
+class ProtocolValidationError(ValueError):
+    """Raised when a protocol definition is malformed."""
+
+
+def _edge_fields(t: dict, source_dims: List[str], target_dims: List[str]) -> List[str]:
+    """Fields carried along a transition.
+
+    If the transition declares ``carries``, that list is the edge stalk (it must
+    be a subset of both endpoint stalks). Otherwise every field shared by both
+    endpoints is carried, which preserves the original behaviour.
+    """
+    if "carries" in t and t["carries"] is not None:
+        carries = list(t["carries"])
+        return [d for d in source_dims if d in carries]
+    return [d for d in source_dims if d in target_dims]
+
+
+def validate_protocol(
+    states: Dict[str, List[str]],
+    transitions: List[dict],
+    faces: Optional[List[dict]] = None,
+) -> None:
+    """Reject malformed inputs instead of silently producing wrong scores."""
+    if not isinstance(states, dict) or not states:
+        raise ProtocolValidationError("protocol must define at least one state")
+    for sname, dims in states.items():
+        if not isinstance(dims, list):
+            raise ProtocolValidationError(f"state '{sname}' stalks must be a list")
+        seen = set()
+        for d in dims:
+            if not isinstance(d, str) or not d:
+                raise ProtocolValidationError(f"state '{sname}' has a non-string field label: {d!r}")
+            if d in seen:
+                raise ProtocolValidationError(f"state '{sname}' has duplicate field label '{d}'")
+            seen.add(d)
+
+    names = set()
+    for i, t in enumerate(transitions):
+        for key in ("from", "to", "name"):
+            if key not in t:
+                raise ProtocolValidationError(f"transition #{i} missing '{key}'")
+        if t["from"] not in states:
+            raise ProtocolValidationError(f"transition '{t['name']}' references unknown state '{t['from']}'")
+        if t["to"] not in states:
+            raise ProtocolValidationError(f"transition '{t['name']}' references unknown state '{t['to']}'")
+        if t["name"] in names:
+            raise ProtocolValidationError(f"duplicate transition name '{t['name']}'")
+        names.add(t["name"])
+        if t.get("carries") is not None:
+            carries = t["carries"]
+            if not isinstance(carries, list):
+                raise ProtocolValidationError(f"transition '{t['name']}' carries must be a list")
+            if len(set(carries)) != len(carries):
+                raise ProtocolValidationError(f"transition '{t['name']}' has duplicate labels in carries")
+            for d in carries:
+                if d not in states[t["from"]] or d not in states[t["to"]]:
+                    raise ProtocolValidationError(
+                        f"transition '{t['name']}' carries '{d}', which is not in both "
+                        f"'{t['from']}' and '{t['to']}'"
+                    )
+        for d in t.get("drops", []) or []:
+            if d not in states[t["from"]]:
+                raise ProtocolValidationError(
+                    f"transition '{t['name']}' declares drop of '{d}', which '{t['from']}' does not have"
+                )
+
+    face_names = set()
+    for face in faces or []:
+        fname = face.get("name")
+        if not fname:
+            raise ProtocolValidationError("face missing 'name'")
+        if fname in face_names:
+            raise ProtocolValidationError(f"duplicate face name '{fname}'")
+        face_names.add(fname)
+        for edge in (face.get("plus") or []) + (face.get("minus") or []):
+            if edge not in names:
+                raise ProtocolValidationError(f"face '{fname}' references unknown transition '{edge}'")
+
 
 def build_restriction_maps(
     states: Dict[str, List[str]],
@@ -34,7 +115,7 @@ def build_restriction_maps(
 
         source_dims = states[source]
         target_dims = states[target]
-        shared = [d for d in source_dims if d in target_dims]
+        shared = _edge_fields(t, source_dims, target_dims)
 
         if not shared:
             restrictions[name] = {
@@ -257,6 +338,13 @@ def compute_h1_2complex(delta_0: np.ndarray, delta_1: np.ndarray) -> dict:
     else:
         complex_residual = 0.0
 
+    # If delta_1 . delta_0 != 0 the input is not a cochain complex and the
+    # "dimensions" below are meaningless (they can even go negative).
+    if complex_residual > COMPLEX_TOL:
+        raise ProtocolValidationError(
+            f"delta_1 . delta_0 != 0 (residual {complex_residual:g}); faces do not form a valid 2-complex"
+        )
+
     return {
         "dim_c0": dim_c0,
         "dim_c1": dim_c1,
@@ -282,6 +370,7 @@ def analyse_protocol(
     Returns:
         {dim_c0, dim_c1, rank_delta0, dim_h0, dim_h1, euler}
     """
+    validate_protocol(states, transitions)
     restrictions = build_restriction_maps(states, transitions)
     delta_0 = build_coboundary_0(states, transitions, restrictions)
     return compute_h1(delta_0)
@@ -295,6 +384,7 @@ def analyse_protocol_2complex(
     """
     Full cohomology analysis of an explicit 2-complex refinement.
     """
+    validate_protocol(states, transitions, faces)
     restrictions = build_restriction_maps(states, transitions)
     face_maps = build_face_maps(restrictions, faces)
     delta_0 = build_coboundary_0(states, transitions, restrictions)
@@ -385,3 +475,85 @@ def trace_leaks(
             })
 
     return leaks
+
+
+def initial_states(states: Dict[str, List[str]], transitions: List[dict]) -> List[str]:
+    """States with no incoming transition (sorted)."""
+    targets = {t["to"] for t in transitions}
+    return sorted(s for s in states if s not in targets)
+
+
+def field_loss(
+    states: Dict[str, List[str]],
+    transitions: List[dict],
+    invariant_fields: Optional[List[str]] = None,
+) -> dict:
+    """Directly score dropped and missing fields.
+
+    Unlike H^1 (which counts cycles in each field's support graph), this score is
+    monotone in the intuitive sense: restoring a missing field can only lower it,
+    and a single transition that drops a field scores > 0 even on a tree.
+
+    invariant_fields: fields that must survive every transition. Defaults to the
+        fields common to all initial states (states with no incoming edge).
+
+    A transition may list ``drops: [field, ...]`` to declare an intentional drop
+    (e.g. a terminal cancellation that discards a field by design); declared
+    drops are reported but not scored.
+
+    Returns {score, invariant_fields, dropped, missing, declared_drops}.
+      dropped: invariant field present at the source but not carried across the edge.
+      missing: invariant field absent from a state reachable from an initial state,
+               unless every incoming drop of it was declared.
+    """
+    validate_protocol(states, transitions)
+    if invariant_fields is None:
+        inits = initial_states(states, transitions)
+        if inits:
+            common = set(states[inits[0]])
+            for s in inits[1:]:
+                common &= set(states[s])
+            invariant_fields = [d for d in states[inits[0]] if d in common]
+        else:
+            invariant_fields = []
+    inv = list(invariant_fields)
+
+    dropped, declared = [], []
+    for t in transitions:
+        src, tgt = t["from"], t["to"]
+        carried = set(_edge_fields(t, states[src], states[tgt]))
+        declared_here = set(t.get("drops", []) or [])
+        for d in inv:
+            if d in states[src] and d not in carried:
+                rec = {"transition": t["name"], "from": src, "to": tgt, "field": d}
+                (declared if d in declared_here else dropped).append(rec)
+
+    # reachability from initial states
+    inits = initial_states(states, transitions)
+    adj: Dict[str, List[str]] = {}
+    for t in transitions:
+        adj.setdefault(t["from"], []).append(t["to"])
+    reach, stack = set(inits), list(inits)
+    while stack:
+        u = stack.pop()
+        for v in adj.get(u, []):
+            if v not in reach:
+                reach.add(v)
+                stack.append(v)
+
+    declared_pairs = {(r["to"], r["field"]) for r in declared}
+    missing = []
+    for s in sorted(reach):
+        if s in inits:
+            continue
+        for d in inv:
+            if d not in states[s] and (s, d) not in declared_pairs:
+                missing.append({"state": s, "field": d})
+
+    return {
+        "score": len(dropped) + len(missing),
+        "invariant_fields": inv,
+        "dropped": dropped,
+        "missing": missing,
+        "declared_drops": declared,
+    }
