@@ -89,6 +89,8 @@ def test_carries_is_honoured():
     base = analyse_protocol(s, t)
     cut = analyse_protocol(s, t2)
     assert cut["dim_c1"] == base["dim_c1"] - 1
+    # As the toy's header comment states: on a tree H^1 stays 0; H^0 rises by one.
+    assert (cut["dim_h1"], cut["dim_h0"]) == (0, base["dim_h0"] + 1)
     fl = field_loss(s, t2)
     assert {"transition": "release", "from": "DELIVER", "to": "RELEASE", "field": "amount"} in fl["dropped"]
 

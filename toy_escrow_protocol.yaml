@@ -6,9 +6,14 @@
 #   1-complex H^1 = 0  (acyclic, full field carry-through)
 #   2-complex H^1 = 0  (no faces needed, graph is a tree)
 #
-# To introduce a deliberate gap, remove "amount" from the
-# DELIVER -> RELEASE transition carries list. This should
-# raise H^1 to 1.
+# Removing "amount" from the DELIVER -> RELEASE carries list does NOT
+# raise H^1: the graph is a tree, so H^1 stays 0. The edit shrinks C^1
+# from 10 to 9 and raises H^0 from 7 to 8 (RELEASE's amount is no longer
+# tied to DELIVER's). field_loss stays 0 because RELEASE still holds
+# amount in its stalk; the edge appears only in field_loss's unscored
+# per-edge "dropped" detail. To make field_loss score the gap, remove
+# amount from RELEASE's stalk (and from that carries list) instead:
+# field_loss then scores 1.
 
 states:
   LOCK:
