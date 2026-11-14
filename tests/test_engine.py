@@ -293,3 +293,54 @@ def test_unknown_initial_state_rejected():
     s, t = _retry_model()
     with pytest.raises(ProtocolValidationError):
         field_loss(s, t, initial="NOPE")
+
+
+# --- linter output and plumbing --------------------------------------------
+
+def _lint(*args):
+    return subprocess.run([sys.executable, "h1_lint.py", *args], cwd=ROOT,
+                          capture_output=True, text=True)
+
+
+def test_lint_default_prints_one_field_loss_line():
+    r = _lint("--config", "protocol.yaml")
+    assert r.returncode == 0, r.stderr
+    lines = [l for l in r.stdout.splitlines() if "FIELD LOSS" in l or l.strip().startswith("missing ")]
+    assert len(lines) == 1, lines
+    assert "--field-loss" in lines[0]
+
+
+def test_lint_field_loss_flag_prints_pairs_with_witness():
+    r = _lint("--config", "protocol.yaml", "--field-loss")
+    assert r.returncode == 0, r.stderr
+    assert "missing  deadline" in r.stdout and "INITIATED --cancel_initiated--> CANCELLED" in r.stdout
+    assert "not about contract storage" in r.stdout
+
+
+def _write_yaml(tmp_path, doc):
+    path = tmp_path / "m.yaml"
+    path.write_text(yaml.safe_dump(doc))
+    return str(path)
+
+
+RETRY_DOC = {
+    "states": {"START": {"stalks": ["id", "amt"]}, "WORK": {"stalks": ["id"]}},
+    "transitions": [{"from": "START", "to": "WORK", "name": "go"},
+                    {"from": "WORK", "to": "START", "name": "retry"}],
+}
+
+
+def test_lint_reads_initial_key(tmp_path):
+    bad = _lint("--config", _write_yaml(tmp_path, RETRY_DOC), "--field-loss")
+    assert bad.returncode != 0 and "no initial state" in (bad.stdout + bad.stderr)
+    good = _lint("--config", _write_yaml(tmp_path, dict(RETRY_DOC, initial="START")), "--field-loss")
+    assert good.returncode == 0, good.stderr
+    assert "missing  amt" in good.stdout
+
+
+def test_lint_track_introduced_flag(tmp_path):
+    doc = {"states": {"A": {"stalks": ["id"]}, "B": {"stalks": ["id", "x"]}, "C": {"stalks": ["id"]}},
+           "transitions": [{"from": "A", "to": "B", "name": "ab"}, {"from": "B", "to": "C", "name": "bc"}]}
+    path = _write_yaml(tmp_path, doc)
+    assert "missing  x" not in _lint("--config", path, "--field-loss").stdout
+    assert "missing  x" in _lint("--config", path, "--field-loss", "--track-introduced").stdout

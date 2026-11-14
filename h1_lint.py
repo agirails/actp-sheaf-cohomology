@@ -12,6 +12,8 @@ Usage:
     python3 h1_lint.py --json                     # JSON output (for CI)
     python3 h1_lint.py --leaks                    # Show dimension leak details
     python3 h1_lint.py --leaks --path dispute     # Leaks for specific path
+    python3 h1_lint.py --field-loss               # Full field-loss findings with witness paths
+    python3 h1_lint.py --field-loss --track-introduced  # Also track fields introduced mid-protocol
 """
 
 import argparse
@@ -132,6 +134,17 @@ def load_protocol(config_path: str) -> dict:
         print(f"ERROR: {config_path}: {exc}", file=sys.stderr)
         sys.exit(1)
 
+    initial = proto.get("initial")
+    if initial is not None:
+        names = [initial] if isinstance(initial, str) else initial
+        if not isinstance(names, list) or not names:
+            print(f"ERROR: {config_path}: 'initial' must be a state name or a non-empty list", file=sys.stderr)
+            sys.exit(1)
+        for s in names:
+            if s not in states:
+                print(f"ERROR: {config_path}: 'initial' names unknown state '{s}'", file=sys.stderr)
+                sys.exit(1)
+
     return {
         "name": proto.get("name", "Unknown"),
         "version": proto.get("version", "?"),
@@ -139,6 +152,7 @@ def load_protocol(config_path: str) -> dict:
         "transitions": transitions,
         "paths": paths,
         "faces": faces,
+        "initial": initial,
     }
 
 
@@ -151,7 +165,18 @@ def status_icon(h1: int, expect: int = None) -> str:
     return "⚠️"
 
 
-def build_report(proto: dict, include_two_complex: bool = False) -> dict:
+def build_field_loss(proto: dict, track_introduced: bool = False) -> dict:
+    """field_loss for a loaded protocol; an error is reported, never scored as 0."""
+    try:
+        return field_loss(
+            proto["states"], proto["transitions"], initial=proto.get("initial"),
+            origins="all" if track_introduced else "initial",
+        )
+    except ProtocolValidationError as exc:
+        return {"error": str(exc)}
+
+
+def build_report(proto: dict, include_two_complex: bool = False, track_introduced: bool = False) -> dict:
     """Collect full, path, leak, and optional 2-complex diagnostics."""
     states = proto["states"]
     transitions = proto["transitions"]
@@ -171,7 +196,7 @@ def build_report(proto: dict, include_two_complex: bool = False) -> dict:
         },
         "paths": {},
         "leaks": trace_leaks(states, transitions),
-        "field_loss": field_loss(states, transitions),
+        "field_loss": build_field_loss(proto, track_introduced),
         "regressions": [],
     }
 
@@ -230,7 +255,43 @@ def build_report(proto: dict, include_two_complex: bool = False) -> dict:
     return report
 
 
-def print_human(proto: dict, report: dict, show_leaks: bool = False, leak_path: str = None, show_2complex: bool = False):
+FIELD_LOSS_SCOPE = (
+    "A finding is a model-level statement about the YAML stalks, "
+    "not about contract storage."
+)
+
+
+def print_field_loss(fl: dict, detailed: bool = False):
+    """One summary line by default; the full block with --field-loss."""
+    if "error" in fl:
+        print(f"FIELD LOSS  not computed: {fl['error']}")
+        print()
+        return
+    mode = " (tracking introduced fields)" if fl["origins"] == "all" else ""
+    if not detailed:
+        print(f"FIELD LOSS  score = {fl['score']}{mode}  (model-level; run with --field-loss for details)")
+        print()
+        return
+    print(f"FIELD LOSS — (state, field) pairs where the field is expected but absent{mode}")
+    print(f"  {FIELD_LOSS_SCOPE}")
+    print(f"  score = {fl['score']}  initial = {', '.join(fl['initial_states'])}  "
+          f"tracked fields = {len(fl['invariant_fields'])}")
+    for m in fl["missing"]:
+        witness = m["path"][0]
+        for edge, state in zip(m["via"], m["path"][1:]):
+            witness += f" --{edge}--> {state}"
+        print(f"    missing  {m['field']:22s} at {m['state']:12s} witness: {witness}")
+    if fl["dropped"]:
+        print(f"  per-edge detail (not scored): {len(fl['dropped'])} undeclared edge drops")
+        for d in fl["dropped"]:
+            print(f"    edge     {d['field']:22s} not carried by {d['transition']} ({d['from']} → {d['to']})")
+    if fl["declared_drops"]:
+        print(f"  ({len(fl['declared_drops'])} declared intentional drops excuse their downstream paths)")
+    print()
+
+
+def print_human(proto: dict, report: dict, show_leaks: bool = False, leak_path: str = None,
+                show_2complex: bool = False, show_field_loss: bool = False):
     """Human-readable output."""
     states = proto["states"]
     paths = proto.get("paths", {})
@@ -260,15 +321,7 @@ def print_human(proto: dict, report: dict, show_leaks: bool = False, leak_path: 
 
     fl = report.get("field_loss")
     if fl is not None:
-        print("FIELD LOSS (direct score: dropped + missing invariant fields)")
-        print(f"  score = {fl['score']}  invariant fields = {len(fl['invariant_fields'])}")
-        for d in fl["dropped"]:
-            print(f"    dropped  {d['field']:22s} at {d['transition']} ({d['from']} → {d['to']})")
-        for m in fl["missing"]:
-            print(f"    missing  {m['field']:22s} at {m['state']}")
-        if fl["declared_drops"]:
-            print(f"  ({len(fl['declared_drops'])} declared intentional drops not scored)")
-        print()
+        print_field_loss(fl, detailed=show_field_loss)
 
     if show_2complex:
         if "two_complex" not in report:
@@ -486,6 +539,18 @@ def main():
         action="store_true",
         help="Compute explicit 2-complex cohomology when faces are defined in YAML"
     )
+    parser.add_argument(
+        "--field-loss",
+        dest="field_loss",
+        action="store_true",
+        help="Print every field-loss finding with a witness path (default: one summary line)"
+    )
+    parser.add_argument(
+        "--track-introduced",
+        dest="track_introduced",
+        action="store_true",
+        help="Field loss: also track fields introduced after the initial state (not monotone)"
+    )
 
     args = parser.parse_args()
 
@@ -504,13 +569,18 @@ def main():
         sys.exit(1)
 
     proto = load_protocol(config_path)
-    report = build_report(proto, include_two_complex=args.two_complex)
+    report = build_report(proto, include_two_complex=args.two_complex,
+                          track_introduced=args.track_introduced)
 
     if args.json:
         print_json(report)
     else:
-        print_human(proto, report, show_leaks=args.leaks, leak_path=args.path, show_2complex=args.two_complex)
+        print_human(proto, report, show_leaks=args.leaks, leak_path=args.path,
+                    show_2complex=args.two_complex, show_field_loss=args.field_loss)
 
+    if args.field_loss and "error" in report["field_loss"]:
+        print(f"ERROR: field loss not computed: {report['field_loss']['error']}", file=sys.stderr)
+        sys.exit(1)
     sys.exit(1 if report["regressions"] else 0)
 
 
