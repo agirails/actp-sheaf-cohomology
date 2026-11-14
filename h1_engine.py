@@ -477,83 +477,152 @@ def trace_leaks(
     return leaks
 
 
-def initial_states(states: Dict[str, List[str]], transitions: List[dict]) -> List[str]:
-    """States with no incoming transition (sorted)."""
-    targets = {t["to"] for t in transitions}
-    return sorted(s for s in states if s not in targets)
+def initial_states(
+    states: Dict[str, List[str]],
+    transitions: List[dict],
+    initial=None,
+) -> List[str]:
+    """Initial states of the protocol.
+
+    If ``initial`` is given (the YAML top-level ``initial:`` key, a state name or
+    a list of names) it is used as-is. Otherwise the initial states are those
+    with no incoming transition other than self-loops, so a polling self-loop on
+    the start state does not hide it.
+
+    Raises ProtocolValidationError (a ValueError) if the result is empty or names
+    an unknown state, instead of letting downstream scores silently become 0.
+    """
+    if initial is not None:
+        names = [initial] if isinstance(initial, str) else list(initial)
+        if not names:
+            raise ProtocolValidationError("'initial' is empty; name at least one state")
+        for s in names:
+            if s not in states:
+                raise ProtocolValidationError(f"'initial' names unknown state '{s}'")
+        return sorted(set(names))
+    targets = {t["to"] for t in transitions if t["to"] != t["from"]}
+    inits = sorted(s for s in states if s not in targets)
+    if not inits:
+        raise ProtocolValidationError(
+            "no initial state: every state has an incoming transition (e.g. a retry "
+            "edge back to the start); declare a top-level 'initial:' key in the YAML"
+        )
+    return inits
 
 
 def field_loss(
     states: Dict[str, List[str]],
     transitions: List[dict],
     invariant_fields: Optional[List[str]] = None,
+    initial=None,
+    origins: str = "initial",
 ) -> dict:
-    """Directly score dropped and missing fields.
+    """Directly score expected fields that are missing from a state's stalk.
 
-    Unlike H^1 (which counts cycles in each field's support graph), this score is
-    monotone in the intuitive sense: restoring a missing field can only lower it,
-    and a single transition that drops a field scores > 0 even on a tree.
+    Definitions (path closure over (state, field) pairs, not edges):
 
-    invariant_fields: fields that must survive every transition. Defaults to the
-        fields common to all initial states (states with no incoming edge).
+    * Initial states: ``initial`` if given (YAML ``initial:``), otherwise the
+      states with no incoming edge other than self-loops. An empty set raises.
+    * Origins of a field f: in the default mode (``origins="initial"``), the
+      initial states whose stalk contains f. With ``origins="all"``, every state
+      reachable from an initial state whose stalk contains f (so a field
+      introduced mid-protocol is tracked downstream of where it appears).
+    * f is EXPECTED at s if some path from an origin of f to s has no transition
+      declaring ``drops: [f]``. A declared drop therefore excuses everything
+      downstream of it on that path, and a state reachable by one declared-drop
+      path and one undeclared path is still expected to have f.
+    * score = number of (s, f) pairs with f expected at s and f not in s's stalk.
 
-    A transition may list ``drops: [field, ...]`` to declare an intentional drop
-    (e.g. a terminal cancellation that discards a field by design); declared
-    drops are reported but not scored.
+    Tracked fields: ``invariant_fields`` if given; otherwise the union of the
+    origins' fields (default mode: the union of the initial states' fields).
 
-    Returns {score, invariant_fields, dropped, missing, declared_drops}.
-      dropped: invariant field present at the source but not carried across the edge.
-      missing: invariant field absent from a state reachable from an initial state,
-               unless every incoming drop of it was declared.
+    Monotonicity (default mode only). The expected set depends on the graph,
+    the declared drops, the initial states' stalks and ``invariant_fields``,
+    and on no other stalk. So adding a field to the stalk of a NON-initial state
+    leaves the expected set unchanged and can only remove pairs: the score never
+    increases, and falls by exactly one if that pair was expected. Enlarging an
+    INITIAL state's stalk adds obligations and can raise the score. With
+    ``origins="all"`` monotonicity is NOT guaranteed: adding a field to any
+    state makes that state an origin and can create new downstream pairs.
+
+    ``carries`` does not affect the score; a field that both endpoints hold but
+    the edge does not carry is listed in ``dropped`` (unscored detail).
+
+    Returns {score, origins, initial_states, invariant_fields, missing,
+    dropped, declared_drops}.
+      missing: [{state, field, path, via}] -- the scored pairs, each with one
+               shortest witness path (states) and the transition names along it.
+      dropped: tracked field present at an edge's source, not carried across the
+               edge and not declared (secondary per-edge detail, not scored).
+      declared_drops: the same, for declared drops.
     """
+    if origins not in ("initial", "all"):
+        raise ValueError("origins must be 'initial' or 'all'")
     validate_protocol(states, transitions)
+    inits = initial_states(states, transitions, initial)
+
+    out_edges: Dict[str, List[dict]] = {}
+    for t in transitions:
+        out_edges.setdefault(t["from"], []).append(t)
+
+    # States reachable from an initial state (ignoring drops).
+    reach, stack = set(inits), list(inits)
+    while stack:
+        u = stack.pop()
+        for t in out_edges.get(u, []):
+            if t["to"] not in reach:
+                reach.add(t["to"])
+                stack.append(t["to"])
+
+    origin_states = inits if origins == "initial" else sorted(reach)
     if invariant_fields is None:
-        inits = initial_states(states, transitions)
-        if inits:
-            common = set(states[inits[0]])
-            for s in inits[1:]:
-                common &= set(states[s])
-            invariant_fields = [d for d in states[inits[0]] if d in common]
-        else:
-            invariant_fields = []
-    inv = list(invariant_fields)
+        tracked: List[str] = []
+        for s in origin_states:
+            tracked += [d for d in states[s] if d not in tracked]
+    else:
+        tracked = list(invariant_fields)
+
+    missing = []
+    for f in tracked:
+        # Breadth-first search from every origin holding f, along edges that do
+        # not declare a drop of f; parents give one shortest witness per state.
+        sources = [s for s in origin_states if f in states[s]]
+        parent: Dict[str, Optional[dict]] = {s: None for s in sources}
+        queue = list(sources)
+        while queue:
+            u = queue.pop(0)
+            for t in out_edges.get(u, []):
+                if f in (t.get("drops") or []) or t["to"] in parent:
+                    continue
+                parent[t["to"]] = t
+                queue.append(t["to"])
+        for s in sorted(parent):
+            if f in states[s]:
+                continue
+            path, via, cur = [s], [], s
+            while parent[cur] is not None:
+                via.append(parent[cur]["name"])
+                cur = parent[cur]["from"]
+                path.append(cur)
+            missing.append({"state": s, "field": f, "path": path[::-1], "via": via[::-1]})
+    missing.sort(key=lambda m: (m["state"], m["field"]))
 
     dropped, declared = [], []
     for t in transitions:
         src, tgt = t["from"], t["to"]
         carried = set(_edge_fields(t, states[src], states[tgt]))
         declared_here = set(t.get("drops", []) or [])
-        for d in inv:
+        for d in tracked:
             if d in states[src] and d not in carried:
                 rec = {"transition": t["name"], "from": src, "to": tgt, "field": d}
                 (declared if d in declared_here else dropped).append(rec)
 
-    # reachability from initial states
-    inits = initial_states(states, transitions)
-    adj: Dict[str, List[str]] = {}
-    for t in transitions:
-        adj.setdefault(t["from"], []).append(t["to"])
-    reach, stack = set(inits), list(inits)
-    while stack:
-        u = stack.pop()
-        for v in adj.get(u, []):
-            if v not in reach:
-                reach.add(v)
-                stack.append(v)
-
-    declared_pairs = {(r["to"], r["field"]) for r in declared}
-    missing = []
-    for s in sorted(reach):
-        if s in inits:
-            continue
-        for d in inv:
-            if d not in states[s] and (s, d) not in declared_pairs:
-                missing.append({"state": s, "field": d})
-
     return {
-        "score": len(dropped) + len(missing),
-        "invariant_fields": inv,
-        "dropped": dropped,
+        "score": len(missing),
+        "origins": origins,
+        "initial_states": inits,
+        "invariant_fields": tracked,
         "missing": missing,
+        "dropped": dropped,
         "declared_drops": declared,
     }

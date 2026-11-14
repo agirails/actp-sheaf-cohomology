@@ -46,7 +46,7 @@ def test_current_model_with_disputed_cancelled():
 def test_restoring_missing_field_lowers_field_loss():
     s, t, _ = load("toy_escrow_broken.yaml")
     before = field_loss(s, t)
-    assert {"state": "DISPUTE", "field": "amount"} in before["missing"]
+    assert [(m["state"], m["field"]) for m in before["missing"]] == [("DISPUTE", "amount")]
     s2 = copy.deepcopy(s)
     s2["DISPUTE"].append("amount")
     after = field_loss(s2, t)
@@ -61,8 +61,8 @@ def test_tree_that_drops_field_is_flagged():
     t = [{"from": "A", "to": "B", "name": "step"}]
     assert analyse_protocol(s, t)["dim_h1"] == 0  # H^1 cannot see it
     fl = field_loss(s, t)
-    assert fl["score"] == 2  # dropped on the edge + missing at B
-    assert fl["dropped"][0]["field"] == "amount"
+    assert fl["score"] == 1  # one (state, field) pair: amount expected at B
+    assert fl["dropped"][0]["field"] == "amount"  # per-edge detail, unscored
 
 
 def test_declared_drop_is_not_scored():
@@ -178,3 +178,118 @@ def test_safe_vs_unsafe_escrow_not_discriminated():
     assert [x["actor"] for x in t1] != [x["actor"] for x in t2]  # they really differ
     assert analyse_protocol(s1, t1) == analyse_protocol(s2, t2)
     assert field_loss(s1, t1) == field_loss(s2, t2)
+
+
+# --- field-loss path-closure semantics (second pass, 2026-11-14) -----------
+
+def _fan_out(restore_at_b=False):
+    """A(id,amt) -> B(id) -> {C1,C2,C3}(id), optionally with amt restored at B."""
+    s = {"A": ["id", "amt"], "B": ["id", "amt"] if restore_at_b else ["id"],
+         "C1": ["id"], "C2": ["id"], "C3": ["id"]}
+    t = [{"from": "A", "to": "B", "name": "ab"}]
+    t += [{"from": "B", "to": c, "name": "b_" + c} for c in ("C1", "C2", "C3")]
+    return s, t
+
+
+def test_field_loss_is_monotone_on_fan_out():
+    s, t = _fan_out()
+    before = field_loss(s, t)
+    assert before["score"] == 4  # amt expected at B, C1, C2, C3
+    after = field_loss(*_fan_out(restore_at_b=True))
+    assert after["score"] == 3   # restoring at B removes exactly one pair
+    assert after["score"] < before["score"]
+
+
+def test_field_loss_restore_at_dispute_never_worse():
+    s, t, _ = load("toy_escrow_broken.yaml")
+    before = field_loss(s, t)
+    s2 = copy.deepcopy(s)
+    s2["DISPUTE"].append("amount")
+    assert field_loss(s2, t)["score"] <= before["score"]
+
+
+def test_restoring_any_missing_pair_lowers_score_by_one():
+    s, t, _ = load("protocol.yaml")
+    base = field_loss(s, t)
+    for pair in base["missing"]:
+        s2 = copy.deepcopy(s)
+        s2[pair["state"]].append(pair["field"])
+        assert field_loss(s2, t)["score"] == base["score"] - 1, pair
+
+
+def test_declared_non_terminal_drop_excuses_downstream():
+    s = {"A": ["id", "amt"], "B": ["id"], "C": ["id"], "D": ["id"]}
+    t = [{"from": "A", "to": "B", "name": "ab", "drops": ["amt"]},
+         {"from": "B", "to": "C", "name": "bc"},
+         {"from": "C", "to": "D", "name": "cd"}]
+    fl = field_loss(s, t)
+    assert fl["score"] == 0 and fl["missing"] == []
+
+
+def test_mixed_declared_and_undeclared_paths_still_flag():
+    # A -> B declares the drop, but A -> M -> B does not: amt is still expected at B.
+    s = {"A": ["id", "amt"], "M": ["id", "amt"], "B": ["id"]}
+    t = [{"from": "A", "to": "B", "name": "direct", "drops": ["amt"]},
+         {"from": "A", "to": "M", "name": "am"},
+         {"from": "M", "to": "B", "name": "mb"}]
+    fl = field_loss(s, t)
+    assert [(m["state"], m["field"]) for m in fl["missing"]] == [("B", "amt")]
+    assert fl["missing"][0]["path"] == ["A", "M", "B"]
+    assert fl["missing"][0]["via"] == ["am", "mb"]
+    assert fl["score"] == 1
+
+
+def test_field_loss_witness_path_for_fan_out():
+    s, t = _fan_out()
+    by_state = {m["state"]: m for m in field_loss(s, t)["missing"]}
+    assert by_state["C2"]["path"] == ["A", "B", "C2"]
+    assert by_state["C2"]["via"] == ["ab", "b_C2"]
+
+
+def test_track_introduced_fields_mode():
+    # x is introduced at B (not at the initial state) and lost at C.
+    s = {"A": ["id"], "B": ["id", "x"], "C": ["id"]}
+    t = [{"from": "A", "to": "B", "name": "ab"}, {"from": "B", "to": "C", "name": "bc"}]
+    assert field_loss(s, t)["score"] == 0
+    fl = field_loss(s, t, origins="all")
+    assert [(m["state"], m["field"]) for m in fl["missing"]] == [("C", "x")]
+    # Not monotone in this mode: introducing x at a non-initial state adds obligations.
+    s0 = {"A": ["id"], "B": ["id"], "C": ["id"]}
+    assert field_loss(s0, t, origins="all")["score"] == 0 < fl["score"]
+
+
+# --- initial states: no silent zero ----------------------------------------
+
+def _retry_model():
+    s = {"START": ["id", "amt"], "WORK": ["id"]}
+    t = [{"from": "START", "to": "WORK", "name": "go"},
+         {"from": "WORK", "to": "START", "name": "retry"}]
+    return s, t
+
+
+def test_no_initial_state_raises():
+    s, t = _retry_model()
+    with pytest.raises(ValueError, match="no initial state"):
+        field_loss(s, t)
+
+
+def test_explicit_initial_key_works():
+    s, t = _retry_model()
+    fl = field_loss(s, t, initial="START")
+    assert fl["initial_states"] == ["START"]
+    assert [(m["state"], m["field"]) for m in fl["missing"]] == [("WORK", "amt")]
+
+
+def test_self_loop_on_start_keeps_it_initial():
+    s = {"START": ["id", "amt"], "WORK": ["id"]}
+    t = [{"from": "START", "to": "START", "name": "poll"},
+         {"from": "START", "to": "WORK", "name": "go"}]
+    fl = field_loss(s, t)
+    assert fl["initial_states"] == ["START"]
+    assert fl["score"] == 1
+
+
+def test_unknown_initial_state_rejected():
+    s, t = _retry_model()
+    with pytest.raises(ProtocolValidationError):
+        field_loss(s, t, initial="NOPE")
