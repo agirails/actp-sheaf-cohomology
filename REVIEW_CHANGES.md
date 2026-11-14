@@ -13,7 +13,7 @@ This note explains every change on the branch, why it was made, how to verify it
 From the repo root, with the Python env that has `numpy`, `pyyaml`, and `pytest` (e.g. `/tmp/sheafvenv`):
 
 ```bash
-# Full regression suite (19 tests)
+# Full regression suite (39 tests after the second pass)
 /tmp/sheafvenv/bin/python -m pytest tests/ -q
 
 # Paper-scoped model still reproduces README Theorem 3.6 numbers
@@ -79,7 +79,9 @@ Result (asserted by `test_safe_vs_unsafe_escrow_not_discriminated`):
 
 **Why:** Review §2 showed H¹ counts cycles in each field's support graph, not dropped data. Restoring missing `amount` at DISPUTE in `toy_escrow_broken.yaml` *raises* H¹ (4→5); a single tree edge that drops a field has H¹ = 0.
 
-**What:** New `field_loss(...)` (plus `initial_states`) scores invariant fields that are dropped across an edge or missing at a reachable state. Monotone: restoring a missing field can only lower the score. Optional `drops: [...]` on a transition marks an intentional drop (reported, not scored).
+**What:** New `field_loss(...)` (plus `initial_states`) scores invariant fields that are dropped across an edge or missing at a reachable state. Optional `drops: [...]` on a transition marks an intentional drop (reported, not scored).
+
+**Superseded (second pass):** the first-pass claim that this score was monotone was false (restoring `amt` at B in A(id,amt)→B(id)→{C1,C2,C3} moved it 5→6). The score was redefined; see "Second pass (2026-11-14)" below.
 
 **Verify:** `pytest` tests `test_restoring_missing_field_lowers_field_loss`, `test_tree_that_drops_field_is_flagged`, `test_declared_drop_is_not_scored`.
 
@@ -139,15 +141,73 @@ Result (asserted by `test_safe_vs_unsafe_escrow_not_discriminated`):
 
 ## Known open items (not fixed on this branch)
 
-1. **README and paper figures not updated for current `protocol.yaml`.** README still advertises 1-complex `H¹ = 24`. That remains true for `protocol_paper_v1.yaml` only; current `protocol.yaml` is **28**. Paper prose about "10 faces" / implemented transitions needs a pass against the live YAML.
+1. **README figures (resolved in the second pass).** Paper-figure commands now point at `protocol_paper_v1.yaml`; `protocol.yaml` is documented as the current-kernel model. The paper's own prose ("10 faces", Theorem 3.6) is unchanged by design: it describes the paper model.
 
-2. **Toy comment still wrong.** `toy_escrow_protocol.yaml` still says removing `amount` from `carries` "should" produce H¹ = 1. With `carries` now honoured, that edit shrinks C¹ and is caught by `field_loss`, but on a tree **H¹ stays 0**. The comment should point at `field_loss`, not H¹.
+2. **Toy comment (resolved in the second pass).** See second pass, item 7.
 
-3. **Intentional field drops in cancellations need marking.** Paths into `CANCELLED` drop many fields (deadline, service_hash, escrow_*, …) by design. They are not yet annotated with `drops: [...]`, so `field_loss` will score them as real losses once someone runs it on the full ACTP model. Mark declared cancellations before treating the score as a CI gate.
+3. **Intentional field drops in cancellations need marking.** Paths into `CANCELLED` drop `deadline` and `service_hash` by design, and `SETTLED` lacks `deadline`. They are not annotated with `drops: [...]`, so `field_loss` scores 3 on `protocol.yaml` (and on `protocol_paper_v1.yaml`). Mark declared drops before treating the score as a CI gate.
 
 4. **Safety claim still unsupported.** Safe vs unsafe escrow scores are identical (see above). Do not revive "verification and safety" language until a separating example exists.
 
 5. **Other review items left untouched** (by design on this branch): participant-model tautologies, "paths" as induced subgraphs, CI gating only named-path mismatches, archival attestation mutation, README path-interpretation claims (`happy_quoted` H¹=6 explanation).
+
+---
+
+## Second pass (2026-11-14)
+
+Branch `apex/review-fixes-2`, on top of `sage/review-fixes`. Fixes from an independent review of the first pass. Each fix has a test that was red before it.
+
+### 1. `field_loss` redefined by path closure (blocker: not monotone) — `h1_engine.py`
+
+The per-edge score was not monotone: in A(id,amt)→B(id)→{C1,C2,C3}(id), restoring `amt` at B made every edge out of B count as a drop (5→6). `field_loss` now counts **(state, field) pairs**:
+
+- **Initial states:** the top-level YAML `initial:` key (a name or list) if present, else the states with no incoming edge other than self-loops.
+- **Expected:** f is expected at s if some path from an initial state holding f reaches s with no transition declaring `drops: [f]`. A declared drop excuses everything downstream on that path; a state also reached by an undeclared path is still expected to have f.
+- **Score:** pairs with f expected at s and f absent from s's stalk; each pair carries one shortest witness path (`path`, `via`).
+- **Monotone in the default mode:** the expected set depends only on the graph, the declared drops and the initial states' stalks, so adding a field to a non-initial state's stalk can only remove pairs. Enlarging an initial state's stalk adds obligations and can raise the score.
+- **`origins="all"`** (CLI `--track-introduced`): a field introduced at any reachable state is tracked downstream of it. Not monotone, as documented.
+- The old per-edge listing remains as `dropped` (unscored detail).
+
+Tests: `test_field_loss_is_monotone_on_fan_out` (4→3), `test_field_loss_restore_at_dispute_never_worse`, `test_restoring_any_missing_pair_lowers_score_by_one`, `test_declared_non_terminal_drop_excuses_downstream`, `test_mixed_declared_and_undeclared_paths_still_flag`, `test_field_loss_witness_path_for_fan_out`, `test_track_introduced_fields_mode`. Two first-pass tests were updated to the pair semantics (`test_restoring_missing_field_lowers_field_loss`, `test_tree_that_drops_field_is_flagged`: score 1, not 2).
+
+### 2. No silent zero (blocker) — `h1_engine.py`, `h1_lint.py`
+
+If no initial state can be found (every state has a non-self-loop incoming edge), `initial_states` raises `ProtocolValidationError` (a `ValueError`) asking for an `initial:` key. A self-loop on the start state no longer hides it. The linter reads `initial:` and reports the error instead of a score (exit 1 under `--field-loss`).
+
+Tests: `test_no_initial_state_raises`, `test_explicit_initial_key_works`, `test_self_loop_on_start_keeps_it_initial`, `test_unknown_initial_state_rejected`, `test_lint_reads_initial_key`.
+
+### 3. Paper figures point at `protocol_paper_v1.yaml` (blocker) — `README.md`, `REPRODUCING.md`, `H1_LINTER_SPEC.md`
+
+Every command reproducing a paper figure (24 / 0 / 20, 10 faces, C² = 44) now uses `protocol_paper_v1.yaml`, which `cmp` confirms is byte-identical to `protocol.yaml` at `2ded063` and `f18490e`. New sections describe `protocol.yaml` as the current-kernel model (adds `DISPUTED→CANCELLED`, face `cancel_via_dispute`): 28 / 0 / 20, 11 faces, C² = 48. No number in the `.tex` changed.
+
+### 4. Face-stalk remark wording — `sheaf_cohomology_actp_pub.tex`
+
+Same mathematics, tighter statements: shrinking a face stalk to a subspace replaces δ₁ by Pδ₁ for the projection P (removing rows only for a coordinate subspace); it "cannot shrink ker δ₁"; the H¹ = 0 result "is not guaranteed for other choices". The PDF was not rebuilt.
+
+### 5. Linter output — `h1_lint.py`, `README.md`
+
+The default output prints one field-loss line (`FIELD LOSS  score = 3  (model-level; run with --field-loss for details)`). `--field-loss` prints each pair with its witness path, the unscored per-edge detail, and the sentence that a finding is a model-level statement about the YAML stalks, not about contract storage. Tests: `test_lint_default_prints_one_field_loss_line`, `test_lint_field_loss_flag_prints_pairs_with_witness`, `test_lint_track_introduced_flag`.
+
+### 6. Test gaps — `tests/test_engine.py`, `verify_rational.py`
+
+- (a) Reverting the `carries` handling in `verify_rational.py` now turns `test_rational_builder_honours_carries` and `test_verify_rational_checks_dimensions_with_partial_carries` red (checked by reverting, running, restoring). `verify_protocol` now compares C⁰, C¹ and rank(δ₀) with the engine, not only H¹, which a tree cannot distinguish.
+- (b) `test_current_model_with_disputed_cancelled` pins graph H¹ = 28, 2-complex H¹ = 0, H² = 20, faces = 11.
+- (c) `verify_rational.py` rebuilds δ₁ in exact arithmetic, checks δ₁δ₀ = 0 exactly, and verifies 2-complex H¹ and H² from exact ranks against numpy and the engine, for both `protocol_paper_v1.yaml` and `protocol.yaml`; it exits 1 on mismatch. Tests: `test_rational_delta1_rank_and_2complex`, `test_verify_rational_cli_catches_2complex_mismatch`.
+
+### 7. Nits
+
+- `toy_escrow_protocol.yaml` header: removing `amount` from the `release` carries list leaves H¹ at 0 (tree), shrinks C¹ 10→9 and raises H⁰ 7→8; `field_loss` stays 0 because RELEASE still holds `amount` (the edge appears in the unscored `dropped` detail). Pinned in `test_carries_is_honoured`.
+- This section.
+
+### Verification commands (second pass)
+
+```bash
+.venv/bin/python -m pytest tests/ -q                                  # 39 passed
+.venv/bin/python verify_rational.py; echo EXIT=$?                     # ALL CROSS-VALIDATIONS PASSED, EXIT=0
+.venv/bin/python h1_lint.py --config protocol_paper_v1.yaml --2complex   # 1-complex H¹ 24; 2-complex H¹ 0, H² 20, 10 faces
+.venv/bin/python h1_lint.py --config protocol.yaml --2complex            # 1-complex H¹ 28; 2-complex H¹ 0, H² 20, 11 faces
+.venv/bin/python h1_lint.py --config protocol.yaml --2complex --field-loss   # 3 pairs with witness paths
+```
 
 ---
 
