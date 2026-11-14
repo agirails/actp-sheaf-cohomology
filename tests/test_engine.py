@@ -36,8 +36,11 @@ def test_paper_v1_numbers_reproduce():
 def test_current_model_with_disputed_cancelled():
     s, t, f = load("protocol.yaml")
     assert any(x["from"] == "DISPUTED" and x["to"] == "CANCELLED" for x in t)
+    assert analyse_protocol(s, t)["dim_h1"] == 28
     two = analyse_protocol_2complex(s, t, f)
     assert two["dim_h1"] == 0  # the added face keeps the 2-complex result
+    assert two["dim_h2"] == 20
+    assert len(f) == len(two["faces"]) == 11
     assert two["complex_residual"] == 0
 
 
@@ -344,3 +347,49 @@ def test_lint_track_introduced_flag(tmp_path):
     path = _write_yaml(tmp_path, doc)
     assert "missing  x" not in _lint("--config", path, "--field-loss").stdout
     assert "missing  x" in _lint("--config", path, "--field-loss", "--track-introduced").stdout
+
+
+# --- verify_rational: carries and exact delta_1 ----------------------------
+
+def test_rational_builder_honours_carries():
+    s, t, _ = load("toy_escrow_protocol.yaml")
+    t2 = copy.deepcopy(t)
+    t2[1]["carries"].remove("amount")
+    _, _, n_e = verify_rational.build_delta0_rational(s, t2)
+    assert n_e == analyse_protocol(s, t2)["dim_c1"] == 9
+
+
+def test_verify_rational_checks_dimensions_with_partial_carries(tmp_path):
+    with open(os.path.join(ROOT, "toy_escrow_protocol.yaml")) as fh:
+        doc = yaml.safe_load(fh)
+    doc["transitions"][1]["carries"].remove("amount")
+    path = tmp_path / "cut.yaml"
+    path.write_text(yaml.safe_dump(doc))
+    assert verify_rational.verify_protocol(str(path), "toy with partial carries")
+
+
+@pytest.mark.parametrize("path,expected", [("protocol_paper_v1.yaml", (24, 0, 20)),
+                                           ("protocol.yaml", (28, 0, 20))])
+def test_rational_delta1_rank_and_2complex(path, expected):
+    s, t, f = load(path)
+    d0, _, n_e = verify_rational.build_delta0_rational(s, t)
+    d1, n_f = verify_rational.build_delta1_rational(s, t, f)
+    assert verify_rational.rational_product_is_zero(d1, d0)
+    r0, r1 = verify_rational.rational_rank(d0), verify_rational.rational_rank(d1)
+    assert (r1, (n_e - r1) - r0, n_f - r1) == expected
+    two = analyse_protocol_2complex(s, t, f)
+    assert (r0, r1, two["dim_h1"], two["dim_h2"]) == (two["rank_delta0"], two["rank_delta1"], 0, 20)
+
+
+def test_verify_rational_cli_catches_2complex_mismatch():
+    forced = subprocess.run(
+        [sys.executable, "-c",
+         "import sys, runpy, h1_engine\n"
+         "orig = h1_engine.analyse_protocol_2complex\n"
+         "def bad(*a, **k):\n"
+         "    r = orig(*a, **k); r['dim_h2'] += 1; return r\n"
+         "h1_engine.analyse_protocol_2complex = bad\n"
+         "runpy.run_path('verify_rational.py', run_name='__main__')\n"],
+        cwd=ROOT, capture_output=True, text=True)
+    assert forced.returncode == 1, forced.stdout + forced.stderr
+    assert "MISMATCH" in forced.stdout
