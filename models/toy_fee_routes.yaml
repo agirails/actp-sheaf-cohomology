@@ -1,0 +1,13 @@
+# Toy escrow: two routes from DELIVERED to SETTLED, both collecting the promised 1% fee.
+name: "toy escrow, routes agree"
+initial: COMMITTED
+states:
+  COMMITTED: {quantities: [amount]}
+  DELIVERED: {quantities: [amount]}
+  DISPUTED:  {quantities: [amount]}
+  SETTLED:   {quantities: [paid_out, fee]}
+transitions:
+  - {name: deliver, from: COMMITTED, to: DELIVERED, map: {amount: {amount: 1}}}
+  - {name: settle, from: DELIVERED, to: SETTLED, map: {paid_out: {amount: 1}, fee: {amount: 1/100}}}
+  - {name: dispute, from: DELIVERED, to: DISPUTED, map: {amount: {amount: 1}}}
+  - {name: uphold_provider, from: DISPUTED, to: SETTLED, map: {paid_out: {amount: 1}, fee: {amount: 1/100}}}
