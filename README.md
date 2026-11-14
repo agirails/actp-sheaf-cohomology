@@ -7,7 +7,12 @@
 
 The repository is also the reproducibility artifact for the paper *Sheaf Cohomology for Settlement Protocol Verification* (Rooschüz and Mujić, 2026). The paper is being revised; see [Status](#status).
 
-<!-- HERO: animated diagram goes here (light and dark SVG), see docs/README-VISUALS.md -->
+<picture>
+  <source media="(prefers-reduced-motion: reduce) and (prefers-color-scheme: dark)" srcset="docs/assets/route-agreement-dark-static.svg">
+  <source media="(prefers-reduced-motion: reduce)" srcset="docs/assets/route-agreement-light-static.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/route-agreement-dark.svg">
+  <img src="docs/assets/route-agreement-light.svg" width="100%" alt="Two toy state machines carry a value from COMMITTED through DELIVERED to SETTLED, directly or through DISPUTED. In the sound model both routes collect amount/100 and merge. In the seeded mismatch the dispute route collects amount/200; the highlighted loop witnesses a fee difference of minus amount/200. These are toy models only.">
+</picture>
 
 ## Quick start
 
