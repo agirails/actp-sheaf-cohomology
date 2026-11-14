@@ -75,10 +75,11 @@ def panel(y, case, prefix, colors, animated):
     nodes = []
     for x, cy, label in [(106, 162, "COMMITTED"), (350, 162, "DELIVERED"),
                           (600, 294, "DISPUTED"), (860, 162, "SETTLED")]:
+        label_y = cy + 58 if label == "DISPUTED" else cy - 36
         nodes.append(f'''<g>
           <circle cx="{x}" cy="{cy}" r="12" fill="{colors['bg']}" stroke="{colors['line']}" stroke-width="2"/>
           <circle cx="{x}" cy="{cy}" r="4" fill="{colors['muted']}"/>
-          <text x="{x}" y="{cy+49}" text-anchor="middle" class="state">{label}</text>
+          <text x="{x}" y="{label_y}" text-anchor="middle" class="state">{label}</text>
         </g>''')
     return f'''
     <g transform="translate(0 {y})" class="case {'sound' if agrees else 'mismatch'}">

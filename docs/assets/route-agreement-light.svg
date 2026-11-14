@@ -67,19 +67,19 @@
       <g>
           <circle cx="106" cy="162" r="12" fill="#f5f9ff" stroke="#bccbde" stroke-width="2"/>
           <circle cx="106" cy="162" r="4" fill="#4c617d"/>
-          <text x="106" y="211" text-anchor="middle" class="state">COMMITTED</text>
+          <text x="106" y="126" text-anchor="middle" class="state">COMMITTED</text>
         </g><g>
           <circle cx="350" cy="162" r="12" fill="#f5f9ff" stroke="#bccbde" stroke-width="2"/>
           <circle cx="350" cy="162" r="4" fill="#4c617d"/>
-          <text x="350" y="211" text-anchor="middle" class="state">DELIVERED</text>
+          <text x="350" y="126" text-anchor="middle" class="state">DELIVERED</text>
         </g><g>
           <circle cx="600" cy="294" r="12" fill="#f5f9ff" stroke="#bccbde" stroke-width="2"/>
           <circle cx="600" cy="294" r="4" fill="#4c617d"/>
-          <text x="600" y="343" text-anchor="middle" class="state">DISPUTED</text>
+          <text x="600" y="352" text-anchor="middle" class="state">DISPUTED</text>
         </g><g>
           <circle cx="860" cy="162" r="12" fill="#f5f9ff" stroke="#bccbde" stroke-width="2"/>
           <circle cx="860" cy="162" r="4" fill="#4c617d"/>
-          <text x="860" y="211" text-anchor="middle" class="state">SETTLED</text>
+          <text x="860" y="126" text-anchor="middle" class="state">SETTLED</text>
         </g>
       <g class="arrival" aria-hidden="true">
         <circle cx="860" cy="162" r="27" fill="none" stroke="#006b50" stroke-width="2"/>
@@ -125,19 +125,19 @@
       <g>
           <circle cx="106" cy="162" r="12" fill="#f5f9ff" stroke="#bccbde" stroke-width="2"/>
           <circle cx="106" cy="162" r="4" fill="#4c617d"/>
-          <text x="106" y="211" text-anchor="middle" class="state">COMMITTED</text>
+          <text x="106" y="126" text-anchor="middle" class="state">COMMITTED</text>
         </g><g>
           <circle cx="350" cy="162" r="12" fill="#f5f9ff" stroke="#bccbde" stroke-width="2"/>
           <circle cx="350" cy="162" r="4" fill="#4c617d"/>
-          <text x="350" y="211" text-anchor="middle" class="state">DELIVERED</text>
+          <text x="350" y="126" text-anchor="middle" class="state">DELIVERED</text>
         </g><g>
           <circle cx="600" cy="294" r="12" fill="#f5f9ff" stroke="#bccbde" stroke-width="2"/>
           <circle cx="600" cy="294" r="4" fill="#4c617d"/>
-          <text x="600" y="343" text-anchor="middle" class="state">DISPUTED</text>
+          <text x="600" y="352" text-anchor="middle" class="state">DISPUTED</text>
         </g><g>
           <circle cx="860" cy="162" r="12" fill="#f5f9ff" stroke="#bccbde" stroke-width="2"/>
           <circle cx="860" cy="162" r="4" fill="#4c617d"/>
-          <text x="860" y="211" text-anchor="middle" class="state">SETTLED</text>
+          <text x="860" y="126" text-anchor="middle" class="state">SETTLED</text>
         </g>
       <g class="arrival" aria-hidden="true">
         <circle cx="860" cy="162" r="27" fill="none" stroke="#985000" stroke-width="2"/>
