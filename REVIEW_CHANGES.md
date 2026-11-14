@@ -226,3 +226,19 @@ The default output prints one field-loss line (`FIELD LOSS  score = 3  (model-le
 | `REVIEW_CHANGES.md` | this file |
 
 New helpers in `h1_engine.py` (`ProtocolValidationError`, `_edge_fields`, `validate_protocol`, `initial_states`, `field_loss`) already carry short docstrings. No new undocumented functions were added in `h1_lint.py` or `verify_rational.py`.
+
+## Third pass (2026-11-14): route agreement and README
+
+Added, not changing any existing computation:
+- `route_agreement.py`, `ROUTE_AGREEMENT.md`, `models/toy_fee_routes*.yaml`, `tests/test_route_agreement.py` (14 tests): a second sheaf construction whose maps carry the accounting, with a proved theorem (H⁰ is the agreement subspace of routes) and a 600-model random check that computes dim H⁰ two independent ways.
+- `README.md` rewritten around the two tools, with a table of what each output does and does not measure and a Status section on the paper.
+- `docs/README-VISUALS.md`: a brief for the README's animated diagram.
+
+Verification:
+
+```bash
+python -m pytest tests/ -q                                          # 53 passed
+python route_agreement.py --config models/toy_fee_routes.yaml       # exit 0, ROUTES AGREE
+python route_agreement.py --config models/toy_fee_routes_leaky.yaml # exit 1, names the two routes and the fee
+python h1_lint.py --config protocol_paper_v1.yaml --2complex        # unchanged: 24 / 0 / 20
+```
