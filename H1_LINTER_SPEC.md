@@ -89,7 +89,7 @@ edge stalks appearing in the boundary.
 
 ### JSON output
 
-`python3 h1_lint.py --json --2complex` emits:
+`python3 h1_lint.py --config protocol_paper_v1.yaml --json --2complex` emits (abridged):
 
 ```json
 {
@@ -118,21 +118,27 @@ edge stalks appearing in the boundary.
 }
 ```
 
-## Bundled ACTP Result
+## Bundled ACTP Results
 
-For the shipped `protocol.yaml`:
+For the paper model `protocol_paper_v1.yaml` (byte-identical to the model the paper used):
 
 - `1-complex`: `C⁰ = 66`, `C¹ = 72`, `rank(delta_0) = 48`, `H¹ = 24`
-- `2-complex`: `C² = 44`, `rank(delta_1) = 24`, `ker(delta_1) = 48`, `H¹ = 0`, `H² = 20`
+- `2-complex`: 10 faces, `C² = 44`, `rank(delta_1) = 24`, `ker(delta_1) = 48`, `H¹ = 0`, `H² = 20`
+
+For the current-kernel model `protocol.yaml` (adds `DISPUTED → CANCELLED` and face `cancel_via_dispute`):
+
+- `1-complex`: `C⁰ = 66`, `C¹ = 76`, `rank(delta_0) = 48`, `H¹ = 28`
+- `2-complex`: 11 faces, `C² = 48`, `rank(delta_1) = 28`, `ker(delta_1) = 48`, `H¹ = 0`, `H² = 20`
 
 The public artifact therefore reproduces both the reduced-basis graph
-diagnostics and the explicit face-level completeness result.
+diagnostics and the explicit face-level completeness result of the paper.
 
 ## Architecture
 
 - `h1_lint.py` — CLI entry point, YAML validation, reporting
 - `h1_engine.py` — `delta_0`, `delta_1`, and cohomology computations
-- `protocol.yaml` — default ACTP model with explicit faces
+- `protocol.yaml` — default (current-kernel) ACTP model with explicit faces
+- `protocol_paper_v1.yaml` — the paper's ACTP model
 
 ## Design Decisions
 
