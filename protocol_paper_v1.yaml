@@ -1,0 +1,179 @@
+# ACTP Protocol Definition — v2.7.0
+# Edit this file to model state machine changes.
+# Run: python3 h1_lint.py (or python3 h1_lint.py --config protocol.yaml)
+#
+# SDK source of truth: https://docs.agirails.io/changelog
+
+name: "ACTP"
+version: "2.7.0"
+
+states:
+  INITIATED:
+    stalks:
+      - transaction_id
+      - requester_address
+      - provider_address
+      - amount
+      - deadline
+      - service_hash
+
+  QUOTED:
+    stalks:
+      - transaction_id
+      - requester_address
+      - provider_address
+      - amount
+      - deadline
+      - service_hash
+      - quote_details
+
+  COMMITTED:
+    stalks:
+      - transaction_id
+      - requester_address
+      - provider_address
+      - amount
+      - deadline
+      - service_hash
+      - escrow_id
+      - escrow_balance
+
+  IN_PROGRESS:
+    stalks:
+      - transaction_id
+      - requester_address
+      - provider_address
+      - amount
+      - deadline
+      - service_hash
+      - escrow_id
+      - escrow_balance
+      - work_started_at
+
+  DELIVERED:
+    stalks:
+      - transaction_id
+      - requester_address
+      - provider_address
+      - amount
+      - deadline
+      - service_hash
+      - escrow_id
+      - escrow_balance
+      - work_started_at
+      - delivery_proof
+      - dispute_window_end
+
+  SETTLED:
+    stalks:
+      - transaction_id
+      - requester_address
+      - provider_address
+      - amount
+      - service_hash
+      - escrow_id
+      - settlement_tx
+      - provider_payout
+      - platform_fee
+
+  DISPUTED:
+    stalks:
+      - transaction_id
+      - requester_address
+      - provider_address
+      - amount
+      - deadline
+      - service_hash
+      - escrow_id
+      - escrow_balance
+      - delivery_proof
+      - dispute_reason
+
+  CANCELLED:
+    stalks:
+      - transaction_id
+      - requester_address
+      - provider_address
+      - amount
+      - cancellation_reason
+      - refund_tx
+
+transitions:
+  - { from: INITIATED,   to: QUOTED,      name: submitQuote }
+  - { from: INITIATED,   to: COMMITTED,   name: linkEscrow_direct }
+  - { from: QUOTED,       to: COMMITTED,   name: linkEscrow_quoted }
+  - { from: COMMITTED,    to: IN_PROGRESS, name: startWork }
+  - { from: IN_PROGRESS,  to: DELIVERED,   name: deliver }
+  - { from: DELIVERED,    to: SETTLED,     name: settle }
+  - { from: DELIVERED,    to: DISPUTED,    name: dispute }
+  - { from: DISPUTED,     to: SETTLED,     name: resolveDispute }
+  # Cancellation paths
+  - { from: INITIATED,    to: CANCELLED,   name: cancel_initiated }
+  - { from: QUOTED,       to: CANCELLED,   name: cancel_quoted }
+  - { from: COMMITTED,    to: CANCELLED,   name: cancel_committed }
+  - { from: IN_PROGRESS,  to: CANCELLED,   name: cancel_in_progress }
+
+# Explicit 2-cells. Each face is the formal difference of two directed paths
+# with identical endpoints. The face stalk is the intersection of all edge
+# stalks appearing in the boundary.
+faces:
+  - name: quote_commit
+    plus: [submitQuote, linkEscrow_quoted]
+    minus: [linkEscrow_direct]
+
+  - name: dispute_settle
+    plus: [dispute, resolveDispute]
+    minus: [settle]
+
+  - name: cancel_via_quote
+    plus: [submitQuote, cancel_quoted]
+    minus: [cancel_initiated]
+
+  - name: cancel_via_commit_direct
+    plus: [linkEscrow_direct, cancel_committed]
+    minus: [cancel_initiated]
+
+  - name: cancel_via_commit_quoted
+    plus: [submitQuote, linkEscrow_quoted, cancel_committed]
+    minus: [cancel_initiated]
+
+  - name: cancel_via_inprog_direct
+    plus: [linkEscrow_direct, startWork, cancel_in_progress]
+    minus: [cancel_initiated]
+
+  - name: cancel_via_inprog_quoted
+    plus: [submitQuote, linkEscrow_quoted, startWork, cancel_in_progress]
+    minus: [cancel_initiated]
+
+  - name: cancel_quote_vs_commit
+    plus: [linkEscrow_quoted, cancel_committed]
+    minus: [cancel_quoted]
+
+  - name: cancel_quote_vs_inprog
+    plus: [linkEscrow_quoted, startWork, cancel_in_progress]
+    minus: [cancel_quoted]
+
+  - name: cancel_commit_vs_inprog
+    plus: [startWork, cancel_in_progress]
+    minus: [cancel_committed]
+
+# Named analysis paths — define subgraphs to check independently
+paths:
+  happy:
+    states: [INITIATED, COMMITTED, IN_PROGRESS, DELIVERED, SETTLED]
+    description: "Normal transaction flow (no quotes, no disputes)"
+    expect_h1: 0
+
+  happy_quoted:
+    states: [INITIATED, QUOTED, COMMITTED, IN_PROGRESS, DELIVERED, SETTLED]
+    description: "Transaction flow with quote step"
+    expect_h1_info: "Quote-specific data is not fully carried forward in the 1-complex"
+
+  dispute:
+    states: [DELIVERED, DISPUTED, SETTLED]
+    description: "Dispute resolution path"
+
+  cancellation:
+    states: [INITIATED, QUOTED, COMMITTED, IN_PROGRESS, CANCELLED]
+    description: "All cancellation branches"
+    expect_h1_info: "Terminal state — obstructions acceptable by design"

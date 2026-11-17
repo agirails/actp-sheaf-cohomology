@@ -1,0 +1,9 @@
+# Safe escrow: only the payer (or an arbiter after a dispute) may release funds.
+# The safety property lives in `actor`, which the sheaf model does not read.
+states:
+  LOCK:    {stalks: [transaction_id, payer_address, payee_address, amount, escrow_hash]}
+  DELIVER: {stalks: [transaction_id, payer_address, payee_address, amount, escrow_hash, delivery_proof]}
+  RELEASE: {stalks: [transaction_id, payer_address, payee_address, amount, escrow_hash, settlement_tx]}
+transitions:
+  - {from: LOCK,    to: DELIVER, name: deliver, actor: payee}
+  - {from: DELIVER, to: RELEASE, name: release, actor: payer}

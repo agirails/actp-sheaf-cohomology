@@ -33,3 +33,5 @@ dist/
 *.log
 out/
 results/
+__pycache__/
+.pytest_cache/
