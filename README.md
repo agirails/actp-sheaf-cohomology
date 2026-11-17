@@ -1,158 +1,135 @@
 # actp-sheaf-cohomology
 
-Reproducibility artifact for the paper:
+**Sheaf-theoretic checks for protocol state machines.** Describe a protocol as states and transitions in YAML, and ask two questions of it:
 
-> **Sheaf Cohomology for Settlement Protocol Verification**
-> Justin Rooschüz, Damir Mujić — AGIRAILS Inc., 2026.
+1. **Do all routes agree?** If two routes through the protocol reach the same state, do they compute the same promised quantities (payout, fee, what is left in escrow)?
+2. **Are fields carried consistently?** Is a field that the protocol starts with still present where it is expected?
 
-This repository contains the runnable supplementary code that reproduces every
-quantitative claim made in the paper. All commands in [REPRODUCING.md](REPRODUCING.md)
-should produce numbers that match the paper exactly.
+The repository is also the reproducibility artifact for the paper *Sheaf Cohomology for Settlement Protocol Verification* (Rooschüz and Mujić, 2026). The paper is being revised; see [Status](#status).
 
-## What This Is
+<picture>
+  <source media="(prefers-reduced-motion: reduce) and (prefers-color-scheme: dark)" srcset="docs/assets/route-agreement-dark-static.svg">
+  <source media="(prefers-reduced-motion: reduce)" srcset="docs/assets/route-agreement-light-static.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/route-agreement-dark.svg">
+  <img src="docs/assets/route-agreement-light.svg" width="100%" alt="Two toy state machines carry a value from COMMITTED through DELIVERED to SETTLED, directly or through DISPUTED. In the sound model both routes collect amount/100 and merge. In the seeded mismatch the dispute route collects amount/200; the highlighted loop witnesses a fee difference of minus amount/200. These are toy models only.">
+</picture>
 
-A cellular-sheaf model of the [Agent Commerce Transaction Protocol (ACTP)](https://docs.agirails.io)
-8-state lifecycle, plus a CLI linter that computes the first cohomology group
-**H¹** as a topological-completeness diagnostic for state-machine protocols.
-
-The artifact exposes two related analyses over the same YAML state-machine model:
-
-- **1-complex analysis** — graph-only diagnostics over states and transitions
-- **2-complex analysis** — explicit face refinement over parallel protocol paths
-
-It also includes two participant-side supplements:
-
-- `participant_h1.py` — exact six-channel raw-visibility analysis on the higher-order participant complex
-- `participant_semantic_h1.py` — conservative semantic four-channel participant model matching the paper's Section 5 table
-
-The 1-complex output is useful as a leak signal. The 2-complex output tests
-whether those edge-level mismatches collapse once the relevant higher-order
-faces are attached.
-
-## Key Results for the Paper Model `protocol_paper_v1.yaml`
-
-The paper's figures were computed on `protocol_paper_v1.yaml`, which is
-byte-identical to the model the paper used (the `protocol.yaml` of the initial
-public release). Every command that reproduces a paper figure points at it.
-
-- 1-complex: `H¹ = 24`
-- 2-complex: `H¹ = 0`, `H² = 20`, with 10 faces and `C² = 44`
-- `δ₁∘δ₀ = 0` numerically, with residual `0.0e+00`
-
-For the paper's reduced ACTP basis this means:
-
-- the graph abstraction exposes 24 edge-level obstructions
-- the explicit 2-cell refinement closes them
-- ACTP is topologically complete on the published 2-complex model
-
-## `protocol.yaml` Is the Current-Kernel Model
-
-`protocol.yaml` (the linter's default) models the current kernel. It adds the
-`DISPUTED → CANCELLED` transition (`cancel_disputed`) and the face
-`cancel_via_dispute`, so its numbers differ from the paper's:
-
-- 1-complex: `H¹ = 28` (`C¹ = 76`)
-- 2-complex: `H¹ = 0`, `H² = 20`, with 11 faces and `C² = 48`
-
-Use it for current analysis; use `protocol_paper_v1.yaml` to reproduce the paper.
-
-## Quick Start
+## Quick start
 
 ```bash
-pip install -r requirements.txt   # numpy, pyyaml
+pip install -r requirements.txt        # numpy, pyyaml
+python3 -m pytest tests/ -q            # 53 passed
 
-# Main paper claim — Theorem 3.6: H¹ = 0 on the 2-complex (24 / 0 / 20, 10 faces)
-python3 h1_lint.py --config protocol_paper_v1.yaml --2complex
+# 1. Route agreement on a toy escrow, and on the same escrow with a seeded defect
+python3 route_agreement.py --config models/toy_fee_routes.yaml
+python3 route_agreement.py --config models/toy_fee_routes_leaky.yaml
 
-# 1-complex diagnostic with subgraph breakdown (Table 2)
-python3 h1_lint.py --config protocol_paper_v1.yaml
-
-# Current-kernel model (28 / 0 / 20, 11 faces)
-python3 h1_lint.py --config protocol.yaml --2complex
-
-# Rational arithmetic cross-validation (Section 3.2)
-python3 verify_rational.py
+# 2. Field consistency on the ACTP lifecycle model
+python3 h1_lint.py --config protocol.yaml --2complex --field-loss
 ```
 
-For the full reproduction recipe, see [REPRODUCING.md](REPRODUCING.md).
+## 1. Route agreement
+
+`route_agreement.py` builds a cellular sheaf whose maps carry the accounting: each transition says how every promised quantity is computed from the quantities before it.
+
+**Theorem.** The global sections of this sheaf are exactly the starting values on which every pair of routes to the same state agree. So `dim H⁰` equals the number of free parameters if and only if the protocol's accounting does not depend on the route taken. The proof, a reduction to one check per loop, and the limits are in [ROUTE_AGREEMENT.md](ROUTE_AGREEMENT.md).
+
+A toy escrow promises a 1% fee whether a delivery is settled directly or after a dispute. With a seeded defect (the dispute route collects half the fee) the tool names the two routes and the quantity:
+
+```text
+$ python3 route_agreement.py --config models/toy_fee_routes_leaky.yaml
+model: toy escrow, dispute route under-collects the fee   initial state: COMMITTED
+free parameters (dim V_r) = 1   dim H^0 = 0   dim H^1 = 1
+ROUTES DISAGREE on 1 parameter direction(s):
+  at SETTLED: route deliver > settle
+       versus route deliver > dispute > uphold_provider
+    fee: second route minus first = (-1/200)*amount
+```
+
+Exit code 0 means the routes agree, 1 means they disagree, 2 means the model is malformed or outside the theorem's scope. All arithmetic is exact (rational numbers).
+
+A model looks like this:
+
+```yaml
+initial: COMMITTED
+states:
+  COMMITTED: {quantities: [amount]}
+  SETTLED:   {quantities: [paid_out, fee]}
+transitions:
+  - name: settle
+    from: COMMITTED
+    to: SETTLED
+    map:                          # target quantity <- linear form in source quantities
+      paid_out: {amount: 1}
+      fee:      {amount: 1/100}
+views:                            # optional: who can observe which quantities
+  platform: [fee]
+```
+
+With `views`, each finding also says which participants can and cannot see the disagreement in their own quantities.
+
+**The modelling rule.** Put in a state only the quantities the protocol promises are determined by that state alone. A value that legitimately differs by route, such as a dispute split, must be a named free quantity where it is chosen.
+
+## 2. Field consistency (the H¹ linter)
+
+`h1_lint.py` models each state by the list of fields it holds and each transition by the fields both ends share.
+
+```bash
+python3 h1_lint.py --config protocol.yaml              # 1-complex, per-subgraph breakdown
+python3 h1_lint.py --config protocol.yaml --2complex   # with faces over parallel routes
+python3 h1_lint.py --config protocol.yaml --field-loss # list each missing (state, field) pair
+```
+
+It reports two different things, and they should not be confused:
+
+| Output | What it measures | What it does not measure |
+|---|---|---|
+| `H¹` (1-complex and 2-complex) | Loops in each field's support graph. Useful for comparing two versions of a model. | Lost data. Restoring a dropped field can raise it; a drop with no loop scores 0. |
+| `field_loss` score | The number of (state, field) pairs where a field is expected, because a path from an initial state that holds it reaches the state with no declared drop, and is absent. | Anything about contract storage: the field lists are an abstraction. |
+
+In the default mode, adding a field to a non-initial state never raises the `field_loss` score. Details of the YAML schema (`carries`, `drops`, `initial`, `paths`, `faces`) are in [H1_LINTER_SPEC.md](H1_LINTER_SPEC.md).
+
+## What these tools cannot tell you
+
+- **Who is allowed to act.** Two escrows that differ only in who may release the funds get the same answer from both tools. Authorisation needs a model checker or a contract verifier.
+- **Anything about code the model does not describe.** Both tools check the YAML model. A model should be tied to its contract by at least one measured execution.
+- **Non-linear accounting.** Route agreement handles linear maps. A fee with a minimum or a cap needs a model per region; this is not implemented.
+
+## Reproducing the paper
+
+Every figure in the paper is reproduced from `protocol_paper_v1.yaml`, which is byte-identical to the model the paper used. Full recipe: [REPRODUCING.md](REPRODUCING.md).
+
+```bash
+python3 h1_lint.py --config protocol_paper_v1.yaml --2complex   # H¹ = 24 (graph), 0 (2-complex), H² = 20, 10 faces
+python3 verify_rational.py                                      # exact cross-check, exit 0
+python3 participant_semantic_h1.py                              # Section 5 table: 6, 7, 7, 7, 8, 7, 8, 6
+```
+
+`protocol.yaml` is the current model. It adds the `DISPUTED → CANCELLED` transition, so its numbers differ: H¹ = 28 on the graph, 0 on the 2-complex, H² = 20, 11 faces.
+
+## Status
+
+The paper as first written overstates what its H¹ numbers mean. Two reviews in October and November 2026 established that the graph H¹ counts loops per field, and that H¹ = 0 on the 2-complex follows from how the faces are chosen. `REVIEW_CHANGES.md` records each finding and its fix. The route-agreement construction is the basis of a revision in which the cohomology depends on the protocol's own arithmetic. Until that revision is published, cite the tools, not the paper's interpretation of its figures.
 
 ## Files
 
-| File | Paper reference | Purpose |
-|---|---|---|
-| `protocol_paper_v1.yaml` | Tables 1–3, Theorem 3.6 | The paper's ACTP v2.7 model with 10 faces (reproduces 24 / 0 / 20) |
-| `protocol.yaml` | — (current kernel) | Current-kernel model: adds `DISPUTED → CANCELLED` and face `cancel_via_dispute`; 11 faces, 28 / 0 / 20 |
-| `h1_engine.py` | Section 6.2 | Core sheaf computation engine |
-| `h1_lint.py` | Section 6.3 | CI-ready linter (`--2complex`, `--diff`, `--leaks`, `--json`) |
-| `participant_semantic_h1.py` | Table 4, Appendix D | Conservative 4-channel participant model |
-| `participant_h1.py` | Appendix E | Exact 6-channel raw-visibility model |
-| `verify_rational.py` | Section 3.2 | Exact rational arithmetic cross-validation |
-| `actp_sheaf.py` | Section 6 | Original archival reference implementation |
-| `toy_escrow_protocol.yaml` | Section 8 | 3-state toy (methodology validation, expected H¹ = 0) |
-| `toy_escrow_broken.yaml` | Section 8 | 4-state broken toy (gap detection test, expected H¹ = 4) |
-| `H1_LINTER_SPEC.md` | — | Linter contract and YAML schema notes |
-
-## YAML Model
-
-The public interface is the YAML model (`protocol.yaml` by default).
-
-- `states` define vertex stalks
-- `transitions` define directed edges; optional `carries: [...]` sets the edge
-  stalk, optional `drops: [...]` declares an intentional field drop
-- `initial` (optional) names the initial state or states; without it, the
-  initial states are those with no incoming edge other than self-loops
-- `paths` define named subgraphs for targeted diagnostics
-- `faces` define explicit 2-cells as the formal difference of two directed paths with identical endpoints
-
-Example:
-
-```yaml
-faces:
-  - name: quote_commit
-    plus: [submitQuote, linkEscrow_quoted]
-    minus: [linkEscrow_direct]
-```
-
-The face stalk is computed automatically as the intersection of all edge stalks
-appearing in the boundary.
-
-## Field Loss
-
-H¹ counts cycles in each field's support graph, not lost data. The linter also
-prints a direct `field_loss` score: the number of (state, field) pairs where a
-field is expected (reachable from an initial state that holds it, along a path
-with no declared `drops` of it) but absent from the state's stalk. The default
-output is one summary line; `--field-loss` lists each pair with a witness path,
-and `--track-introduced` also tracks fields introduced after the initial state.
-A finding is a model-level statement about the YAML stalks, not about contract
-storage: the stalk labels are an abstraction, and the real kernel keeps one
-struct per transaction. In the default mode, adding a field to a non-initial
-state's stalk never raises the score; enlarging an initial state's stalk, or
-`--track-introduced`, carries no such guarantee.
-
-## Current Interpretation
-
-- `happy` path: `H¹ = 0`
-- `happy_quoted`: `H¹ = 6` on the 1-complex because quote-specific data is not carried into `COMMITTED`
-- `dispute`: `H¹ = 6` on the 1-complex
-- `cancellation`: `H¹ = 18` on the 1-complex because terminal cancellations discard many fields
-- full 2-complex: `H¹ = 0`
-
-For the higher-order participant supplement:
-
-- graph-only six-channel raw-visibility counts are large (21 to 48) because the participant `K4` leaves public cycles unfilled
-- once the four public-information faces are added, the exact six-channel raw-visibility model yields `H¹ = 0` at every ACTP state
-- this shows that the paper's participant table is a conservative semantic upper bound, not an exact raw-visibility invariant
-
-For the conservative semantic participant supplement:
-
-- `participant_semantic_h1.py` reproduces the Section 5 upper-bound table exactly
-- the per-state values are `6, 7, 7, 7, 8, 7, 8, 6`
-- this turns the paper's semantic participant theorem into a runnable artifact rather than a hand-maintained table
+| File | Purpose |
+|---|---|
+| `route_agreement.py` | Route-agreement engine and command line |
+| `ROUTE_AGREEMENT.md` | Theorem, proof, worked example, limits |
+| `models/` | Route-agreement models |
+| `h1_engine.py`, `h1_lint.py` | Field-consistency engine and linter |
+| `H1_LINTER_SPEC.md` | Linter contract and YAML schema |
+| `protocol.yaml` | Current ACTP lifecycle model (field lists) |
+| `protocol_paper_v1.yaml` | The paper's model; reproduces its figures |
+| `verify_rational.py` | Exact rational cross-check of the linter's ranks |
+| `participant_h1.py`, `participant_semantic_h1.py` | The paper's participant supplements |
+| `toy_escrow_protocol.yaml`, `toy_escrow_broken.yaml` | Toy models for the linter |
+| `actp_sheaf.py` | Original archival implementation |
+| `tests/` | 53 tests, including a 600-model random check of the theorem |
+| `REPRODUCING.md`, `REVIEW_CHANGES.md` | Reproduction recipe; review record |
 
 ## Citation
-
-If you use this artifact, please cite the paper:
 
 ```bibtex
 @misc{rooschuz2026sheaf,
@@ -163,7 +140,7 @@ If you use this artifact, please cite the paper:
 }
 ```
 
-A machine-readable [CITATION.cff](CITATION.cff) is also provided.
+A machine-readable [CITATION.cff](CITATION.cff) is provided.
 
 ## License
 

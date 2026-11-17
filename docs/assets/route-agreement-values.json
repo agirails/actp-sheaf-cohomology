@@ -1,0 +1,46 @@
+[
+  {
+    "model": "toy_fee_routes.yaml",
+    "routes": [
+      [
+        "deliver",
+        "settle"
+      ],
+      [
+        "deliver",
+        "dispute",
+        "uphold_provider"
+      ]
+    ],
+    "fee": [
+      "1/100",
+      "1/100"
+    ],
+    "delta": "0",
+    "routes_agree": true,
+    "h0": 1,
+    "h1": 2
+  },
+  {
+    "model": "toy_fee_routes_leaky.yaml",
+    "routes": [
+      [
+        "deliver",
+        "settle"
+      ],
+      [
+        "deliver",
+        "dispute",
+        "uphold_provider"
+      ]
+    ],
+    "fee": [
+      "1/100",
+      "1/200"
+    ],
+    "delta": "-1/200",
+    "routes_agree": false,
+    "h0": 0,
+    "h1": 1
+  }
+]
